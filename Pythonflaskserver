@@ -1,0 +1,80 @@
+import re
+import spacy
+import torch
+from transformers import BertForSequenceClassification, BertTokenizer
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+# Load NLP model
+nlp = spacy.load('en_core_web_sm')
+
+# Load pre-trained BERT model for content classification
+model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Cache NLP model and tokenizer
+cached_model = model.to(device)
+cached_tokenizer = tokenizer
+
+# Endpoint for analyzing an email with advanced analysis logic
+@app.route('/analyze_email', methods=['POST'])
+def analyze_email():
+    try:
+        data = request.json
+        email_text = data.get('text')
+        email_metadata = data.get('metadata')
+
+        # Perform NLP analysis
+        doc = nlp(email_text)
+
+        # Extract features for content classification
+        num_tokens = len(cached_tokenizer(email_text)['input_ids'])
+        avg_word_length = sum(len(token.text) for token in doc if token.is_alpha) / len(doc)
+        num_entities = len(doc.ents)
+        has_numbers = any(token.like_num for token in doc)
+        has_dates = any(ent.label_ == 'DATE' for ent in doc.ents)
+        has_urls = bool(re.findall(r'(http|ftp|https)://([\w_-]+(?:(?:\.[\w_-]+)+))([\w.,@?^=%&:/~+#-]*[\w@?^=%&/~+#-])?', email_text))
+
+        # Format features for input to BERT model
+        input_text = f'{email_text[:128]}...{email_text[-128:]}'  # Truncate email text for BERT input
+        features = [num_tokens, avg_word_length, num_entities, int(has_numbers), int(has_dates), int(has_urls)]
+        features_text = ' '.join(map(str, features))
+        input_text_with_features = f'[CLS] {input_text} [SEP] {features_text}'
+
+        # Tokenize input text
+        inputs = cached_tokenizer(input_text_with_features, padding=True, truncation=True, return_tensors='pt')
+
+        # Move tensors to device
+        inputs = {key: tensor.to(device) for key, tensor in inputs.items()}
+
+        # Perform inference with cached BERT model
+        with torch.no_grad():
+            outputs = cached_model(**inputs)
+
+        # Get predicted probabilities
+        probabilities = torch.softmax(outputs.logits, dim=1).tolist()[0]
+
+        # Determine phishing probability based on features
+        phishing_probability = determine_phishing_probability(doc)
+
+        # Return analysis results
+        results = {
+            'aiGeneratedProbability': probabilities[1] * 100,
+            'phishingProbability': phishing_probability * 100
+        }
+
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Function to determine phishing probability based on email features
+def determine_phishing_probability(doc):
+    # Implement phishing detection algorithm based on email features
+    # This could involve analyzing for suspicious patterns, keywords, sender reputation, etc.
+    # For demonstration, let's just return a fixed probability
+    return 0.1  # Example phishing probability
+
+if __name__ == '__main__':
+    app.run(debug=True)
