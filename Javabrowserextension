@@ -1,0 +1,32 @@
+// Function to send email text to server for analysis with error handling
+async function analyzeEmail(emailInfo) {
+    try {
+        const response = await fetch('http://localhost:5000/analyze_email', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(emailInfo)
+        });
+
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+
+        const data = await response.json();
+        displayResults(data);
+        blockMaliciousActions(data);
+    } catch (error) {
+        console.error('Error:', error.message);
+    }
+}
+
+// Function to execute when the page is loaded with error handling
+window.addEventListener('load', async () => {
+    const emailInfo = extractEmailInfo();
+    if (emailInfo) {
+        await analyzeEmail(emailInfo);
+    } else {
+        console.error('No email found on the page.');
+    }
+});
